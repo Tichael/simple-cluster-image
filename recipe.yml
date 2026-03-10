@@ -1,16 +1,16 @@
-name: Custom Vanilla Desktop # Replace this name with your image name
-id: custom # Replace this ID with your image ID
-vibversion: 1.0.7
+name: Simple Cluster
+id: simple-cluster
+vibversion: 1.1.0
 
 stages:
 - id: build
-  base: ghcr.io/vanilla-os/desktop:main # Optionally, Replace this image URL with a different one i.e. nvidia:main, etc
+  base: ghcr.io/vanilla-os/core:main
   addincludes: true
   singlelayer: false
   labels:
-    maintainer: self-maintained # Optionally, Replace this with your name
+    maintainer: Tichael
   args:
-    DEBIAN_FRONTEND: noninteractive # Set the image environment as non-interactive
+    DEBIAN_FRONTEND: noninteractive
 
   # Commands to run first before building the modules
   runs:
@@ -21,28 +21,107 @@ stages:
   - name: init-setup
     type: shell
     commands:
-    - lpkg --unlock
-    - apt-get update
+      - apt-get update
 
   # Put your custom actions below this comment
 
-  - name: example-packages # Sample module using the built-in Apt module to install packages
+  - name: purge-desktop-bloat
+    type: shell
+    commands:
+      # Remove abstraction tools, audio stack, semantic search, bluetooth, modems, and desktop VPNs
+      - apt-get purge -y distrobox apx vso pipewire pipewire-pulse wireplumber alsa-utils tinysparql \
+        bluez bluez-obexd modemmanager wpasupplicant wireless-tools \
+        network-manager-openvpn network-manager-l2tp network-manager-openconnect \
+        network-manager-ssh network-manager-vpnc || true
+      - apt-get autoremove -y
+
+  - name: setup-proxmox-repo
+    type: shell
+    commands:
+      # Add Proxmox repo for DRBD 9 and LINSTOR
+      - wget -O /tmp/linbit-keyring.deb https://packages.linbit.com/public/linbit-keyring.deb
+      - dpkg -i /tmp/linbit-keyring.deb
+      - echo "deb [signed-by=/etc/apt/trusted.gpg.d/linbit-keyring.gpg] http://packages.linbit.com/public/ proxmox-9 drbd-9" > /etc/apt/sources.list.d/linbit.list
+      - apt update
+
+  - name: setup-docker-repo
+    type: shell
+    commands:
+      # Setup Docker's official apt repository
+      - install -m 0755 -d /etc/apt/keyrings
+      - curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+      - chmod a+r /etc/apt/keyrings/docker.asc
+      - 'echo "Types: deb" > /etc/apt/sources.list.d/docker.sources'
+      - 'echo "URIs: https://download.docker.com/linux/debian" >> /etc/apt/sources.list.d/docker.sources'
+      - 'echo "Suites: bookworm" >> /etc/apt/sources.list.d/docker.sources'
+      - 'echo "Components: stable" >> /etc/apt/sources.list.d/docker.sources'
+      - 'echo "Signed-By: /etc/apt/keyrings/docker.asc" >> /etc/apt/sources.list.d/docker.sources'
+      - apt-get update
+
+  - name: configure-docker
+    type: shell
+    commands:
+    - mkdir -p /etc/docker
+    - 'echo ''{"log-driver": "journald"}'' > /etc/docker/daemon.json'
+
+  - name: install-hyperconverged-stack
     type: apt
     sources:
       - packages:
-        - vim
+        # Docker Swarm
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - docker-buildx-plugin
+        - docker-compose-plugin
+        
+        # VM Stack
+        - qemu-kvm
+        - libvirt-daemon-system
+        - libvirt-clients
+        - bridge-utils
 
-  - name: example-commands # Sample module demonstrating the Shell module with custom commands
+        # Networking HA
+        - keepalived
+
+        # Storage (dkms will auto-compile against the existing linux-headers)
+        - drbd-utils
+        - drbd-dkms
+        - linstor-controller
+        - linstor-satellite
+        - linstor-client
+
+        # Utilities
+        - curl
+        - jq
+
+  - name: enable-system-services
     type: shell
     commands:
-    - echo Example output
+      # Container stack
+      - systemctl enable docker.service
+      - systemctl enable containerd.service
+      
+      # VM stack
+      - systemctl enable libvirtd.service
+      
+      # Networking HA
+      - systemctl enable keepalived.service
+      
+      # Storage stack (Single node controller/satellite combo)
+      - systemctl enable linstor-satellite.service
+      - systemctl enable linstor-controller.service
 
-  - name: example-modules # Sample module demonstrating importing local and remote modules
-    type: includes
-    includes:
-      - modules/50-install-debs.yml # Sample local module present in this repository
-      # - gh:vanilla-os/dev-image:main:modules/00-basics.yml # Sample GitHub remote module in the format: `gh:your-name/your-repo:branch:modules/file.yml`
-      # - https://raw.githubusercontent.com/Vanilla-OS/dev-image/main/modules/05-go.yml # Sample full URL remote module
+  - name: vanilla-tools
+    type: shell
+    sources:
+      - type: tar
+        url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-amd64.tar.gz
+        checksum: aef32f07820e0993e534e6bccfa1a6daae6c8c6f0543d3e073f4f121f2ef2e31
+    commands:
+      - mkdir -p /usr/bin
+      - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/lpkg /usr/bin/lpkg
+      - chmod +x /usr/bin/lpkg
 
   # Put your custom actions above this comment
 
@@ -54,9 +133,9 @@ stages:
   - name: cleanup
     type: shell
     commands:
-    - apt-get autoremove -y
-    - apt-get clean
-    - lpkg --lock
+      - apt-get autoremove -y
+      - apt-get clean
+      - lpkg --lock
 
   - name: fsguard
     type: fsguard
