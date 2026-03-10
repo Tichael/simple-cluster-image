@@ -21,46 +21,73 @@ stages:
   - name: init-setup
     type: shell
     commands:
-    - apt-get update
+      - apt-get update
 
   # Put your custom actions below this comment
 
   - name: purge-desktop-bloat
     type: shell
     commands:
-    # Remove abstraction tools, audio stack, semantic search, bluetooth, modems, and desktop VPNs
-    - apt-get purge -y distrobox apx vso pipewire pipewire-pulse wireplumber alsa-utils tinysparql \
-      bluez bluez-obexd modemmanager wpasupplicant wireless-tools \
-      network-manager-openvpn network-manager-l2tp network-manager-openconnect \
-      network-manager-ssh network-manager-vpnc || true
-    - apt-get autoremove -y
+      # Remove abstraction tools, audio stack, semantic search, bluetooth, modems, and desktop VPNs
+      - apt-get purge -y distrobox apx vso pipewire pipewire-pulse wireplumber alsa-utils tinysparql \
+        bluez bluez-obexd modemmanager wpasupplicant wireless-tools \
+        network-manager-openvpn network-manager-l2tp network-manager-openconnect \
+        network-manager-ssh network-manager-vpnc || true
+      - apt-get autoremove -y
 
   - name: setup-proxmox-repo
     type: shell
     commands:
-    # Add Proxmox repo for DRBD 9 and LINSTOR
-    - wget -qO /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
-    - echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" > /etc/apt/sources.list.d/proxmox.list
-    - apt-get update
+      # Add Proxmox repo for DRBD 9 and LINSTOR
+      - wget -O /tmp/linbit-keyring.deb https://packages.linbit.com/public/linbit-keyring.deb
+      - dpkg -i /tmp/linbit-keyring.deb
+      - echo "deb [signed-by=/etc/apt/trusted.gpg.d/linbit-keyring.gpg] http://packages.linbit.com/public/ proxmox-9 drbd-9" > /etc/apt/sources.list.d/linbit.list
+      - apt update
+
+  - name: setup-docker-repo
+    type: shell
+    commands:
+      # Setup Docker's official apt repository
+      - install -m 0755 -d /etc/apt/keyrings
+      - curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+      - chmod a+r /etc/apt/keyrings/docker.asc
+      - |
+        cat <<EOF > /etc/apt/sources.list.d/docker.sources
+        Types: deb
+        URIs: https://download.docker.com/linux/debian
+        Suites: bookworm
+        Components: stable
+        Signed-By: /etc/apt/keyrings/docker.asc
+        EOF
+      - apt-get update
 
   - name: install-hyperconverged-stack
     type: apt
     sources:
       - packages:
         # Docker Swarm
-        - docker.io
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - docker-buildx-plugin
         - docker-compose-plugin
+        
         # VM Stack
         - qemu-kvm
         - libvirt-daemon-system
         - libvirt-clients
         - bridge-utils
+
         # Networking HA
         - keepalived
+
         # Storage (dkms will auto-compile against the existing linux-headers)
         - drbd-utils
-        - linstor-client
         - drbd-dkms
+        - linstor-controller
+        - linstor-satellite
+        - linstor-client
+
         # Utilities
         - curl
         - jq
@@ -68,10 +95,19 @@ stages:
   - name: enable-system-services
     type: shell
     commands:
-    # Ensure critical daemons start automatically
-    - systemctl enable docker.service
-    - systemctl enable libvirtd.service
-    - systemctl enable keepalived.service
+      # Container stack
+      - systemctl enable docker.service
+      - systemctl enable containerd.service
+      
+      # VM stack
+      - systemctl enable libvirtd.service
+      
+      # Networking HA
+      - systemctl enable keepalived.service
+      
+      # Storage stack (Single node controller/satellite combo)
+      - systemctl enable linstor-satellite.service
+      - systemctl enable linstor-controller.service
 
   - name: vanilla-tools
     type: shell
@@ -80,9 +116,9 @@ stages:
         url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-amd64.tar.gz
         checksum: aef32f07820e0993e534e6bccfa1a6daae6c8c6f0543d3e073f4f121f2ef2e31
     commands:
-    - mkdir -p /usr/bin
-    - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/lpkg /usr/bin/lpkg
-    - chmod +x /usr/bin/lpkg
+      - mkdir -p /usr/bin
+      - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/lpkg /usr/bin/lpkg
+      - chmod +x /usr/bin/lpkg
 
   # Put your custom actions above this comment
 
@@ -94,9 +130,9 @@ stages:
   - name: cleanup
     type: shell
     commands:
-    - apt-get autoremove -y
-    - apt-get clean
-    - lpkg --lock
+      - apt-get autoremove -y
+      - apt-get clean
+      - lpkg --lock
 
   - name: fsguard
     type: fsguard
