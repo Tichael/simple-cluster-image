@@ -21,7 +21,6 @@ stages:
   - name: init-setup
     type: shell
     commands:
-    - lpkg --unlock
     - apt-get update
 
   # Put your custom actions below this comment
@@ -73,6 +72,17 @@ stages:
     - systemctl enable docker.service
     - systemctl enable libvirtd.service
     - systemctl enable keepalived.service
+
+  - name: vanilla-tools
+    type: shell
+    sources:
+      - type: tar
+        url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-amd64.tar.gz
+        checksum: aef32f07820e0993e534e6bccfa1a6daae6c8c6f0543d3e073f4f121f2ef2e31
+    commands:
+    - mkdir -p /usr/bin
+    - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/lpkg /usr/bin/lpkg
+    - chmod +x /usr/bin/lpkg
 
   # Put your custom actions above this comment
 
